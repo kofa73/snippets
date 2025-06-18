@@ -1,0 +1,237 @@
+static void _run_experiment(const dt_iop_order_iccprofile_info_t *const base_profile)
+{
+  printf("\n--- STARTING PARAMETER FITTING EXPERIMENT ---\n");
+
+  const dt_colormatrix_t target_matrix_row_major = {
+      {0.856627153315983f, 0.0951212405381588f, 0.0482516061458583f},
+      {0.137318972929847f, 0.761241990602591f, 0.101439036467562f},
+      {0.11189821299995f, 0.0767994186031903f, 0.811302368396859f}};
+  dt_colormatrix_t target_matrix_transposed;
+  dt_colormatrix_transpose(target_matrix_transposed, target_matrix_row_major);
+
+  float best_insets[3] = {0.29462418, 0.25861865, 0.14641258};
+  float best_rotations[3] = {0.03540374, -0.02108616 , -0.06305792};
+
+  float inset_centers[3] = {0.29462418, 0.25861865, 0.14641258};
+  float inset_ranges[3] = {0.01, 0.01, 0.01};
+  float rotation_centers[3] = {0.03540374, -0.02108616 , -0.06305792};
+  float rotation_ranges[3] = {0.001, 0.001, 0.001};
+
+  float global_min_error = FLT_MAX;
+  int iteration = 0;
+
+  int improved = 1;
+
+  while(improved || iteration < 1000)
+  {
+    const int num_steps = 21;
+    iteration++;
+
+    printf("\n--- Iteration %d ---\n", iteration);
+    printf("Search centers (insets): [%.6f, %.6f, %.6f], (rotations rad): [%.6f, %.6f, %.6f]\n", inset_centers[0],
+           inset_centers[1], inset_centers[2], rotation_centers[0], rotation_centers[1], rotation_centers[2]);
+    printf("Search ranges (insets):  [%.6f, %.6f, %.6f], (rotations rad): [%.6f, %.6f, %.6f]\n", inset_ranges[0],
+           inset_ranges[1], inset_ranges[2], rotation_ranges[0], rotation_ranges[1], rotation_ranges[2]);
+
+    float iteration_min_error = global_min_error;
+    dt_colormatrix_t base_to_rendering_transposed;
+
+    for(int ri = 0; ri < num_steps; ++ri)
+    {
+      float red_inset = inset_centers[0] - inset_ranges[0] / 2.0f + ri * (inset_ranges[0] / (num_steps - 1.0f));
+      for(int rr = 0; rr < num_steps; ++rr)
+      {
+        float red_rotation = rotation_centers[0] - rotation_ranges[0] / 2.0f + rr * (rotation_ranges[0] / (num_steps - 1.0f));
+        for(int gi = 0; gi < num_steps; ++gi)
+        {
+          float green_inset = inset_centers[1] - inset_ranges[1] / 2.0f + gi * (inset_ranges[1] / (num_steps - 1.0f));
+          for(int gr = 0; gr < num_steps; ++gr)
+          {
+            float green_rotation = rotation_centers[1] - rotation_ranges[1] / 2.0f + gr * (rotation_ranges[1] / (num_steps - 1.0f));
+            for(int bi = 0; bi < num_steps; ++bi)
+            {
+              float blue_inset = inset_centers[2] - inset_ranges[2] / 2.0f + bi * (inset_ranges[2] / (num_steps - 1.0f));
+              for(int br = 0; br < num_steps; ++br)
+              {
+                float blue_rotation = rotation_centers[2] - rotation_ranges[2] / 2.0f + br * (rotation_ranges[2] / (num_steps - 1.0f));
+
+                float inset_and_rotated_primaries[3][2];
+                dt_rotate_and_scale_primary(base_profile, 1.f - red_inset, red_rotation, 0, inset_and_rotated_primaries[0]);
+                dt_rotate_and_scale_primary(base_profile, 1.f - green_inset, green_rotation, 1, inset_and_rotated_primaries[1]);
+                dt_rotate_and_scale_primary(base_profile, 1.f - blue_inset, blue_rotation, 2, inset_and_rotated_primaries[2]);
+
+                dt_colormatrix_t rendering_to_xyz_transposed;
+                dt_make_transposed_matrices_from_primaries_and_whitepoint(
+                    inset_and_rotated_primaries, base_profile->whitepoint, rendering_to_xyz_transposed);
+
+                dt_colormatrix_mul(base_to_rendering_transposed, rendering_to_xyz_transposed,
+                                   base_profile->matrix_out_transposed);
+
+                float current_error = -1.0f;
+                for(int i = 0; i < 3; i++)
+                {
+                  for(int j = 0; j < 3; j++)
+                  {
+                    float diff = base_to_rendering_transposed[i][j] - target_matrix_transposed[i][j];
+                    current_error = fmaxf(current_error, fabsf(diff));
+                  }
+                }
+
+                if(current_error < iteration_min_error)
+                {
+                  iteration_min_error = current_error;
+                  best_insets[0] = red_inset;
+                  best_rotations[0] = red_rotation;
+                  best_insets[1] = green_inset;
+                  best_rotations[1] = green_rotation;
+                  best_insets[2] = blue_inset;
+                  best_rotations[2] = blue_rotation;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    improved = iteration_min_error < global_min_error;
+    if (improved)
+    {
+      global_min_error = iteration_min_error;
+    }
+
+    printf("Best params so far:\n");
+    printf("  red_inset:    %.8f, red_rotation:    %.8f (%.4f deg)\n", best_insets[0], best_rotations[0], best_rotations[0] * 180.f / M_PI_F);
+    printf("  green_inset:  %.8f, green_rotation:  %.8f (%.4f deg)\n", best_insets[1], best_rotations[1], best_rotations[1] * 180.f / M_PI_F);
+    printf("  blue_inset:   %.8f, blue_rotation:   %.8f (%.4f deg)\n", best_insets[2], best_rotations[2], best_rotations[2] * 180.f / M_PI_F);
+    printf("  Error: %.12f\n", global_min_error);
+    _print_transposed_matrix("experimental base_to_rendering_transposed", base_to_rendering_transposed);
+
+    for(int i = 0; i < 3; i++)
+    {
+      inset_centers[i] = best_insets[i];
+      rotation_centers[i] = best_rotations[i];
+      inset_ranges[i] /= 1.1f;
+      rotation_ranges[i] /= 1.1f;
+    }
+  }
+  printf("\nNo improvement, stopping, min error: %.12f.\n", global_min_error);
+
+  printf("\n--- FINISHED PARAMETER FITTING EXPERIMENT ---\n");
+}
+
+static void _run_experiment_2(const dt_iop_order_iccprofile_info_t *const base_profile)
+{
+  printf("\n--- STARTING PARAMETER FITTING EXPERIMENT 2 ---\n");
+
+  const dt_colormatrix_t target_matrix_row_major = {
+      {0.899796955911611f, 0.0871996192028351f, 0.013003424885555f},
+      {0.11142098895748f, 0.875575586156966f, 0.0130034248855548f},
+      {0.11142098895748f, 0.0871996192028349f, 0.801379391839686f}};
+  dt_colormatrix_t target_matrix_transposed;
+  dt_colormatrix_transpose(target_matrix_transposed, target_matrix_row_major);
+  float best_outsets[3] = {0, 0, 1};
+  float outset_centers[3] = {0.29055917,0.26062077,0.04649438};
+  float outset_ranges[3] = {0.1,0.1,0.1};
+
+  float global_min_error = FLT_MAX;
+  float global_min_error_max = FLT_MAX;
+  int iteration = 0;
+  const int num_steps = 999;
+
+  int improved = 1;
+
+  while(improved || iteration < 10000)
+  {
+    iteration++;
+
+    printf("\n--- Iteration %d ---\n", iteration);
+    printf("Search centers (outsets): [%.6f, %.6f, %.6f]\n",
+      outset_centers[0], outset_centers[1], outset_centers[2]);
+    printf("Search ranges (outsets):  [%.6f, %.6f, %.6f]\n",
+      outset_ranges[0], outset_ranges[1], outset_ranges[2]);
+
+    float iteration_min_error = global_min_error;
+    float iteration_min_error_max = 1000;
+
+    for(int ro = 0; ro < num_steps; ++ro)
+    {
+      float red_outset = outset_centers[0] - outset_ranges[0] / 2.0f + ro * (outset_ranges[0] / (num_steps - 1.0f));
+        for(int go = 0; go < num_steps; ++go)
+        {
+          float green_outset = outset_centers[1] - outset_ranges[1] / 2.0f + go * (outset_ranges[1] / (num_steps - 1.0f));
+            for(int bo = 0; bo < num_steps; ++bo)
+            {
+              float blue_outset = outset_centers[2] - outset_ranges[2] / 2.0f + bo * (outset_ranges[2] / (num_steps - 1.0f));
+
+
+                float outset_and_unrotated_primaries[3][2];
+                dt_rotate_and_scale_primary(base_profile, 1.f - red_outset, 0, 0, outset_and_unrotated_primaries[0]);
+                dt_rotate_and_scale_primary(base_profile, 1.f - green_outset, 0, 1, outset_and_unrotated_primaries[1]);
+                dt_rotate_and_scale_primary(base_profile, 1.f - blue_outset, 0, 2, outset_and_unrotated_primaries[2]);
+
+                dt_colormatrix_t outset_and_unrotated_to_xyz_transposed;
+                dt_make_transposed_matrices_from_primaries_and_whitepoint(outset_and_unrotated_primaries, base_profile->whitepoint,
+                                                                          outset_and_unrotated_to_xyz_transposed);
+                dt_colormatrix_t tmp;
+                dt_colormatrix_mul(tmp, outset_and_unrotated_to_xyz_transposed, base_profile->matrix_out_transposed);
+
+                float current_error = 0;
+                float max_error = -1;
+                for(int i = 0; i < 3; i++)
+                {
+                  for(int j = 0; j < 3; j++)
+                  {
+                    float diff = tmp[i][j] - target_matrix_transposed[i][j];
+                    max_error = fmaxf(max_error, fabs(diff));
+                    current_error += diff*diff;
+                  }
+                }
+
+                if (max_error < iteration_min_error_max)
+                {
+                  iteration_min_error_max = max_error;
+                  iteration_min_error = current_error;
+                  best_outsets[0] = red_outset;
+                  best_outsets[1] = green_outset;
+                  best_outsets[2] = blue_outset;
+                }
+              }
+      }
+    }
+    improved = iteration_min_error_max < global_min_error_max;
+    if (improved)
+    {
+      global_min_error = iteration_min_error;
+      global_min_error_max = iteration_min_error_max;
+    }
+
+    printf("Best params so far:\n");
+    printf("  red_outset:    %.8f\n", best_outsets[0]);
+    printf("  green_outset:  %.8f\n", best_outsets[1]);
+    printf("  blue_outset:   %.8f\n", best_outsets[2]);
+    printf("  Error: %.12f\n", global_min_error);
+    printf("  Max error in this iteration: %.12f\n", iteration_min_error_max);
+
+    float outset_and_unrotated_primaries[3][2];
+    dt_rotate_and_scale_primary(base_profile, 1.f - best_outsets[0], 0, 0, outset_and_unrotated_primaries[0]);
+    dt_rotate_and_scale_primary(base_profile, 1.f - best_outsets[1], 0, 1, outset_and_unrotated_primaries[1]);
+    dt_rotate_and_scale_primary(base_profile, 1.f - best_outsets[2], 0, 2, outset_and_unrotated_primaries[2]);
+
+    dt_colormatrix_t outset_and_unrotated_to_xyz_transposed;
+    dt_make_transposed_matrices_from_primaries_and_whitepoint(outset_and_unrotated_primaries, base_profile->whitepoint,
+                                                              outset_and_unrotated_to_xyz_transposed);
+    dt_colormatrix_t tmp;
+    dt_colormatrix_mul(tmp, outset_and_unrotated_to_xyz_transposed, base_profile->matrix_out_transposed);
+
+    _print_transposed_matrix("best matrix so far", tmp);
+
+    for(int i = 0; i < 3; i++)
+    {
+      outset_centers[i] = best_outsets[i];
+      outset_ranges[i] /= 1.41;
+    }
+  }
+  printf("\nNo improvement, stopping, min error: %.12f.\n", global_min_error);
+
+  printf("\n--- FINISHED PARAMETER FITTING EXPERIMENT 2 ---\n");
+}
