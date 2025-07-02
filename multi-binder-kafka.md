@@ -62,10 +62,20 @@ spring:
             useNativeEncoding: true
 
       kafka:
+        binder:
+          producerProperties:
+            key.serializer: org.apache.kafka.common.serialization.StringSerializer
+            value.serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+          consumerProperties:
+            key.deserializer: org.apache.kafka.common.serialization.StringDeserializer
+            value.deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+            # and so on
+            specific.avro.reader: true 
         bindings:
           input-from-a:
             consumer:
               configuration:
+                # could define overrides here
                 key.deserializer: org.apache.kafka.common.serialization.StringDeserializer
                 value.deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
                 specific.avro.reader: true # Important for mapping to specific Avro classes
@@ -73,6 +83,7 @@ spring:
           output-to-b:
             producer:
               configuration:
+                # could define overrides here
                 key.serializer: org.apache.kafka.common.serialization.StringSerializer
                 value.serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
 ```
